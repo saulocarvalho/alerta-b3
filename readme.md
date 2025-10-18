@@ -16,13 +16,13 @@ Um bot inteligente para monitoramento de ações da Bolsa de Valores Brasileira 
 - **Múltiplos Alertas**: Gerencie diversos ativos simultaneamente
 
 ### ⚡ Comandos Disponíveis
-
+```
 /set PETR4 compra 35.50 # Cria alerta de compra
 /list # Lista seus alertas
 /rm PETR4 compra # Remove alerta específico
 /rm all # Remove todos os alertas
 /help # Ajuda completa
-
+```
 
 
 ### 👑 Para Administradores
@@ -39,7 +39,7 @@ graph TB
     C --> D[SQLite Database]
     C --> E[B3 Yahoo Finance]
     C --> F[Job Scheduler]
-
+```
 
 ## 🚀 Tecnologias
 
@@ -53,6 +53,7 @@ graph TB
 ## 📦 Instalação
 
 ### Pré-requisitos
+```
 Clone o repositório
 git clone https://github.com/seu-usuario/alerta-b3-bot.git
 cd alerta-b3-bot
@@ -63,20 +64,22 @@ source venv/bin/activate
 
 Dependências
 pip install -r requirements.txt
-
+```
 ### Configuração
 1. Crie um bot com [@BotFather](https://t.me/BotFather) no Telegram
 2. Configure as variáveis de ambiente no arquivo `.env`:
-
+```
 telegram_token=SEU_BOT_TOKEN
 admin_chat_id=SEU_CHAT_ID
-
+```
 
 ### Deploy
+```
 python3 alerta_b3.py
-
+```
 
 ## 🔧 Estrutura do Projeto
+```
 alerta-b3-bot/
 ├── alerta_b3.py          # Código principal
 ├── alertas.db           # Banco de dados
@@ -88,7 +91,7 @@ alerta-b3-bot/
 │   ├── check_bot_health.sh
 │   └── startup_bot_corrigido.sh
 └── README.md
-
+```
 🎯 Exemplos de Uso
 Criando um Alerta
 
