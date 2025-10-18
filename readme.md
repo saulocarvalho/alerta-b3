@@ -2,9 +2,14 @@
 
 Um bot inteligente para monitoramento de ações da Bolsa de Valores Brasileira (B3) com alertas em tempo real via Telegram.
 
-![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
-![Telegram](https://img.shields.io/badge/Telegram-Bot-blue.svg)
-![GCP](https://img.shields.io/badge/Google%20Cloud-Platform-orange.svg)
+![Python](https://img.shields.io/badge/Python-3.13+-3776AB.svg?logo=python&logoColor=white)
+![Telegram](https://img.shields.io/badge/Telegram-Bot-2CA5E0.svg?logo=telegram&logoColor=white)
+![GCP](https://img.shields.io/badge/Google%20Cloud-Platform-4285F4.svg?logo=googlecloud&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-07405E.svg?logo=sqlite&logoColor=white)
+![Uptime](https://img.shields.io/badge/Uptime-24%2F7-brightgreen.svg)
+![Architecture](https://img.shields.io/badge/Architecture-Microservices-blue.svg)
+![Deployment](https://img.shields.io/badge/Deployment-Automated-success.svg)
+![Cost](https://img.shields.io/badge/Cost-Free%20Tier-orange.svg)
 
 ## ✨ Funcionalidades
 
@@ -43,7 +48,7 @@ graph TB
 
 ## 🚀 Tecnologias
 
-- **Python 3.8+** - Lógica principal
+- **Python 3.13** - Lógica principal
 - **python-telegram-bot** - Interface Telegram
 - **SQLAlchemy** - ORM Database
 - **yfinance** - API Cotações B3
