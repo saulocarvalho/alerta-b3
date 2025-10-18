@@ -1,0 +1,22 @@
+# .gitignore
+
+# Variáveis de ambiente
+.env
+
+# Banco de dados SQLite
+# (Opcional, mas recomendado para evitar commit de dados)
+alertas.db
+
+#Script de inicialização
+startup_bot.sh
+
+#Backup
+bkp/
+
+# Arquivos gerados pelo Python (dependências instaladas)
+__pycache__/
+*.pyc
+
+# Diretório de ambientes virtuais
+venv/
+.venv/
