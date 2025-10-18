@@ -24,18 +24,21 @@ Um bot inteligente para monitoramento de ações da Bolsa de Valores Brasileira 
 /help # Ajuda completa
 
 
+
 ### 👑 Para Administradores
 - **Sistema de Whitelist**: Controle de usuários autorizados
 - **Gestão de Acessos**: Ative/desative usuários
 - **Monitoramento**: Acompanhe status do sistema
 
 ## 🏗️ Arquitetura
+
+```mermaid
 graph TB
-A[Telegram Users] --> B[Bot Python]
-B --> C[VM Google Cloud]
-C --> D[SQLite Database]
-C --> E[B3 Yahoo Finance]
-C --> F[Job Scheduler]
+    A[Telegram Users] --> B[Bot Python]
+    B --> C[VM Google Cloud]
+    C --> D[SQLite Database]
+    C --> E[B3 Yahoo Finance]
+    C --> F[Job Scheduler]
 
 
 ## 🚀 Tecnologias
