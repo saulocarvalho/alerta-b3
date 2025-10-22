@@ -4,7 +4,6 @@
 .env
 
 # Banco de dados SQLite
-# (Opcional, mas recomendado para evitar commit de dados)
 alertas.db
 
 #Scripts
