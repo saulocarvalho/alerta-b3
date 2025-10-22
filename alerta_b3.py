@@ -1,3 +1,4 @@
+from datetime import datetime
 import yfinance as yf
 import asyncio
 import time
@@ -412,7 +413,7 @@ async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
         session = Session()
 
-        novo_usuario = UsuarioPermitido(chat_id=novo_id, nome=nome, timestamp=datetime.now())
+        novo_usuario = UsuarioPermitido(chat_id=novo_id, nome=nome, timestamp=datetime.datetime.now())
         session.add(novo_usuario)
 
         session.commit()
@@ -503,7 +504,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "👥 /add_user <ID> <Nome>\n"
         "  - Adiciona um novo usuário autorizado.\n"
         "  - *Exemplo:* `/add_user 123456789 João`\n\n"
-        "📝 /list_users**"
+        "📝 /list_users\n"
         "  - Lista todos os usuários cadastrados com seus IDs e status (Ativo/Inativo).\n\n"
         "⚙️ /toggle_user <ID> <ativar/inativar>\n"
         "  - Altera o status de acesso de um usuário existente.\n"
@@ -513,6 +514,8 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
     await update.message.reply_text(admin_commands_message, parse_mode='Markdown')
+
+#Verificar cotações
 
 def monitorar_cotacoes(app: Application, loop):
     #Loop que rodará em thread separada para monitorar as cotações
@@ -540,9 +543,6 @@ def monitorar_cotacoes(app: Application, loop):
 
                     if preco_atual is not None and preco_atual > 0:
                         precos_atuais[ticker] = preco_atual
-
-                    else:
-                        print (f"DEBUG: Preço nulo/zero para {ticker}. Info: {info}")
                     
                 except Exception as e:
                     print(f"Erro ao buscar cotação de {ticker}: {e}")
@@ -557,7 +557,6 @@ def monitorar_cotacoes(app: Application, loop):
                 if preco_atual is None:
                     continue
                     
-                
                 #rearme   
                 if alerta.disparado == 'S':
                     if alerta.tipo == 'compra' and preco_atual > alerta.valor:

@@ -7,11 +7,15 @@
 # (Opcional, mas recomendado para evitar commit de dados)
 alertas.db
 
-#Script de inicialização
-startup_bot.sh
+#Scripts
+Scripts/
 
 #Backup
 bkp/
+
+
+#teste
+nano testar_relatorio.py
 
 # Arquivos gerados pelo Python (dependências instaladas)
 __pycache__/
