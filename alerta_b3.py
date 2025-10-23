@@ -304,102 +304,113 @@ async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None
 
     if tickers_para_buscar:
         tickers_list = list(tickers_para_buscar)
-        try:
-            # baixa dados intradiários (1 dia, 1 minuto) agrupado por ticker quando possível
-            data = yf.download(tickers_list, period="1d", interval="1m", group_by='ticker', threads=True, progress=False)
-
-            # Caso a resposta seja MultiIndex (vários tickers agrupados) -> extrai por ticker
-            if isinstance(data.columns, pd.MultiIndex):
-                for ticker in tickers_list:
-                    try:
-                        # alguns tickers podem não estar no retorno (erro) -> try/except
-                        close_series = None
-                        if (ticker, 'Close') in data.columns:
-                            close_series = data[ticker]['Close']
-                        else:
-                            # fallback: tenta encontrar alguma coluna Close
-                            if 'Close' in data[ticker].columns:
-                                close_series = data[ticker]['Close']
-                        if close_series is not None and not close_series.empty:
-                            preco_atual = float(close_series.iloc[-1])
-                            if preco_atual and preco_atual > 0:
-                                precos_atuais[ticker] = preco_atual
-                    except Exception as e:
-                        print(f"DEBUG: falha ao extrair Close para {ticker} do DataFrame multi: {e}")
-
-            # Caso seja DataFrame simples (1 ticker), colunas não MultiIndex
-            elif 'Close' in data.columns:
-                try:
-                    close_series = data['Close']
-                    if isinstance(close_series, pd.Series) and not close_series.empty:
-                        preco_atual = float(close_series.iloc[-1])
-                        # determinar o ticker correspondente: quando só 1 ticker, usamos o único da lista
-                        if preco_atual and preco_atual > 0:
-                            ticker = tickers_list[0]
+        print(f"Buscando cotações para {len(tickers_list)} tickers...")
+        
+        # PRIMEIRO: Tentar método individual mais confiável
+        print("Tentando método individual para cada ticker...")
+        for ticker in tickers_list:
+            try:
+                acao = yf.Ticker(ticker)
+                # Tentar várias fontes de preço
+                info = acao.info
+                preco_atual = (
+                    info.get("regularMarketPrice") or 
+                    info.get("currentPrice") or
+                    info.get("previousClose") or 
+                    info.get("lastPrice")
+                )
+                
+                if preco_atual is not None and preco_atual > 0:
+                    precos_atuais[ticker] = float(preco_atual)
+                    print(f"✅ {ticker}: R$ {preco_atual:.2f} (método individual)")
+                else:
+                    # Tentar histórico diário como fallback
+                    hist = acao.history(period="2d")
+                    if not hist.empty and len(hist) > 0:
+                        preco_atual = float(hist['Close'].iloc[-1])
+                        if preco_atual > 0:
                             precos_atuais[ticker] = preco_atual
-                except Exception as e:
-                    print(f"DEBUG: falha ao extrair Close do DataFrame simples: {e}")
+                            print(f"✅ {ticker}: R$ {preco_atual:.2f} (histórico diário)")
+                        else:
+                            print(f"❌ {ticker}: Preço inválido no histórico")
+                    else:
+                        print(f"❌ {ticker}: Sem dados disponíveis")
+                        
+            except Exception as e:
+                print(f"❌ {ticker}: Erro no método individual - {e}")
 
-            # FALLBACK: se não achou nada via download, usa info pra cada ticker
-            if not precos_atuais:
-                for ticker in tickers_list:
-                    try:
-                        info = yf.Ticker(ticker).info
-                        preco_atual = info.get("regularMarketPrice") or info.get("previousClose") or info.get("lastPrice")
-                        if preco_atual is not None and preco_atual > 0:
-                            precos_atuais[ticker] = float(preco_atual)
-                    except Exception as e:
-                        print(f"DEBUG: fallback info falhou para {ticker}: {e}")
+        # SEGUNDO: Se poucos preços foram encontrados, tentar download em lote como fallback
+        if len(precos_atuais) < len(tickers_list) * 0.5:  # Se menos de 50% foram encontrados
+            print("Poucos preços encontrados, tentando download em lote...")
+            try:
+                data = yf.download(
+                    tickers_list, 
+                    period="1d", 
+                    interval="1m", 
+                    group_by='ticker', 
+                    threads=True, 
+                    progress=False,
+                    auto_adjust=False
+                )
 
-        except Exception as e:
-            print(f"Erro geral ao buscar cotações para envio de fechamento: {e}")
-            # fallback simples individual
-            for ticker in tickers_list:
-                try:
-                    info = yf.Ticker(ticker).info
-                    preco_atual = info.get("regularMarketPrice") or info.get("previousClose") or info.get("lastPrice")
-                    if preco_atual is not None and preco_atual > 0:
-                        precos_atuais[ticker] = float(preco_atual)
-                except Exception:
-                    pass
+                # Processar dados do download em lote
+                if isinstance(data.columns, pd.MultiIndex):
+                    for ticker in tickers_list:
+                        if ticker not in precos_atuais:  # Só processar se não foi encontrado antes
+                            try:
+                                if (ticker, 'Close') in data.columns:
+                                    close_series = data[ticker]['Close']
+                                    if not close_series.empty:
+                                        preco = float(close_series.iloc[-1])
+                                        if preco and preco > 0 and not pd.isna(preco):
+                                            precos_atuais[ticker] = preco
+                                            print(f"✅ {ticker}: R$ {preco:.2f} (download lote)")
+                            except Exception as e:
+                                print(f"❌ {ticker}: Erro no download lote - {e}")
+                
+            except Exception as e:
+                print(f"Erro no download em lote: {e}")
+
+    print(f"\n📊 RESUMO: {len(precos_atuais)} de {len(tickers_list)} preços obtidos")
 
     # Envia as cotações para cada usuário
     for chat_id, alertas in alertas_por_usuario.items():
-        mensagem = "**Cotações de Fechamento B3** 📊\n"
-        mensagem += f"Referência: {datetime.datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M')}\n\n"
-
-        ativos_listados = set()
-        ativos_detalhes = {}  # ticker -> lista de (tipo, valor)
-
+        # Agrupar tickers únicos do usuário
+        ativos_detalhes = {}
         for alerta in alertas:
             ativos_detalhes.setdefault(alerta.ticker, []).append((alerta.tipo, alerta.valor))
 
-        algum_ativo_encontrado = False
+        # Construir mensagem
+        mensagem = "**Cotações de Fechamento B3** 📊\n"
+        mensagem += f"Referência: {datetime.datetime.now(ZoneInfo('America/Sao_Paulo')).strftime('%d/%m/%Y %H:%M')}\n\n"
 
+        ativos_com_preco = []
         for ticker, detalhes in ativos_detalhes.items():
             preco = precos_atuais.get(ticker)
-            if preco is not None and ticker not in ativos_listados:
-                # exibir sem o sufixo .SA (mais limpo)
+            if preco is not None and preco > 0 and not pd.isna(preco):
                 ticker_exibicao = ticker.replace('.SA', '')
-                mensagem += f"**{ticker_exibicao}**: R$ {preco:.2f}\n"
-                ativos_listados.add(ticker)
-                algum_ativo_encontrado = True
+                # Adicionar emoji baseado no tipo do alerta
+                emoji = "📈" if any(tipo == 'compra' for tipo, valor in detalhes) else "📉"
+                if any(tipo == 'venda' for tipo, valor in detalhes):
+                    emoji = "💰"
+                
+                mensagem += f"{emoji} **{ticker_exibicao}**: R$ {preco:.2f}\n"
+                ativos_com_preco.append(ticker)
 
-        if algum_ativo_encontrado:
+        if ativos_com_preco:
+            mensagem += f"\n_Total de {len(ativos_com_preco)} ativos com cotações disponíveis_"
             try:
                 await context.bot.send_message(
                     chat_id=chat_id,
                     text=mensagem,
                     parse_mode='Markdown'
                 )
-                print(f"[SUCESSO DE FECHAMENTO] Mensagem de fechamento enviada para {chat_id}.")
+                print(f"[SUCESSO DE FECHAMENTO] Mensagem com {len(ativos_com_preco)} ativos enviada para {chat_id}.")
             except Exception as e:
                 print(f"[ERRO DE TELEGRAM] falha ao enviar mensagem de fechamento para {chat_id}: {e}")
         else:
             print(f"[INFO] Nenhum preço válido encontrado para o usuário {chat_id}.")
-
-        
-            
+                 
 #ações de amidnistrador
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     #Adiciona um novo usuário autorizado (somente admin)
