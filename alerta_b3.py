@@ -1,4 +1,6 @@
 from datetime import datetime
+import logging
+import logging.handlers
 import yfinance as yf
 import asyncio
 import time
@@ -23,6 +25,39 @@ chat_id_admin = int(os.getenv("admin_chat_id"))
 
 intevalo_monitoramento = 1200 #20 minutos
 
+#Configuração de logs 
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs', 'alerta_b3_bot.log') 
+
+#Garantindo se o diretório de logs existe
+os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+
+#Logger principal
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO) #Nível mínimo para gravação
+
+#Definir formato das mensagens
+# %(asctime)s: Data e Hora
+# %(levelname)s: INFO, ERROR, etc.
+# %(threadName)s: A thread que gerou (útil para seu monitoramento)
+# %(funcName)s: A função onde a mensagem foi gerada
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(threadName)s - %(funcName)s - %(message)s')
+
+#gerenciamento
+file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=5*1024*1024, #5mb
+    backupCount=5,
+    encoding='utf-8'
+)
+file_handler.setFormatter(formatter)
+logger.addHandler(file_handler)
+
+#para aparecer no terminal
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+logger.addHandler(console_handler)
+
+
 tipos_alerta = ["compra", "venda"]
 
 #config BD - SQLite
@@ -40,6 +75,7 @@ class Alerta(Base):
     timestamp = Column(DateTime)
     disparado = Column(String, default='N')  # 'S' ou 'N'
     tkt_edt = Column(Boolean, default=False)  # Indica se o alerta foi editado
+    recorrencia = Column(Boolean, default=False) # Indica se o usuário deseja que o alerta seja resetado diáriamente caso disparado.
 
     def __repr__(self):
         return f"<Alerta(ticker='{self.ticker}', tipo='{self.tipo}', valor={self.valor})>"
@@ -106,16 +142,25 @@ async def set_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     
     if not usuario_autorizado(user_id):
         await update.message.reply_text("Oxe oxe, tu não está autorizado(a) a usar esse bot não, fale com o administrador.")
+        logger.warning(f"Tentativa de acesso não autorizada de user_id: {user_id}")
         return
 
     try:
-        #coleta os dados, ex: mxrf11 compra 9.50
-        ticker, tipo_alerta, valor_str = context.args
+        if len(context.args) < 3 or len(context.args) > 4:
+            raise IndexError #força ir para o /help
+        
+        #coleta os dados, ex: mxrf11 compra 9.50 e/ou recorrencia
+        ticker, tipo_alerta, valor_str = context.args[0],context.args[1],context.args[2]
+        #4° argumento opcional
+        recorrencia_arg = context.args[3].lower() if len(context.args) == 4 else None
 
         #validações
         valor = float(valor_str)
         ticker = sanitizar_ticker(ticker)
         tipo_alerta = tipo_alerta.lower()
+
+        #define se o argumento foi recorrente
+        is_recorrente = True if recorrencia_arg == 'recorrente' else False
 
         if not ticker_existe(ticker):
             await update.message.reply_text(f"Opa meu/minha lídeeeer, não encontrei esse ticker não, tem certeza que {ticker} está digitado corretamente?")
@@ -136,13 +181,25 @@ async def set_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             alerta_existente.disparado = 'N' #Rearmar o alerta
             alerta_existente.timestamp = datetime.datetime.now()
             alerta_existente.tkt_edt = True
-            mensagem = f"Alerta **editado** para: {ticker} \nTipo: {tipo_alerta} \nNovo Valor: **R$ {valor:.2f}**"
+            alerta_existente.recorrencia = is_recorrente
+
+            recorrencia_msg = " [RECORRENTE - Reseta Diariamente]" if is_recorrente else ""
+            mensagem = f"Alerta **editado** para: {ticker} \nTipo: {tipo_alerta} \nNovo Valor: **R$ {valor:.2f}**{recorrencia_msg}"
 
         else:
             #Cria novo alerta
-            novo_alerta = Alerta(ticker=ticker, tipo=tipo_alerta, valor=valor, chat_id=user_id, timestamp=datetime.datetime.now())
+            novo_alerta = Alerta(
+                ticker=ticker, 
+                tipo=tipo_alerta, 
+                valor=valor, 
+                chat_id=user_id, 
+                timestamp=datetime.datetime.now(),
+                recorrencia=is_recorrente
+            )
             session.add(novo_alerta)
-            mensagem = f"Alerta **criado** para: {ticker} \nTipo: {tipo_alerta} \nValor: R$ {valor:.2f}"
+
+            recorrencia_msg = " [RECORRENTE - Reseta Diariamente]" if is_recorrente else ""
+            mensagem = f"Alerta **criado** para: {ticker} \nTipo: {tipo_alerta} \nValor: R$ {valor:.2f}{recorrencia_msg}"
 
         session.commit()
         session.close()
@@ -150,8 +207,13 @@ async def set_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(mensagem, parse_mode='Markdown')
     
     except (ValueError, IndexError):
-        await update.message.reply_text("Opa Chefe, provavelmente tem algum parametro errado. Use o comando set e depois as informações. \n\nExemplo: OIBR3 venda 3.00", 
-                                        parse_mode='Markdown')
+        await update.message.reply_text(
+            "Opa Chefe, provavelmente tem algum parametro errado. Use o comando set e depois as informações. \n\n"
+            "**Exemplo Alerta Único:** `/set PETR4 venda 30.00`\n"
+            "**Exemplo Alerta Recorrente:** `/set PETR4 venda 30.00 recorrente`", 
+            parse_mode='Markdown'
+        )
+        logger.warning(f"Comando /set inválido de user_id: {user_id}. Args: {context.args}")
         
 async def listar_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     #Lista todos os alertas criados pelo usuário
@@ -169,16 +231,30 @@ async def listar_alertas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Nenhum alerta criado até então.")
         return
     
-    mensagem = "Segue seus alertas criados consagrado(a):\n\n"
+    mensagem = "**📋 Segue seus alertas criados consagrado(a):**\n\n"
+    mensagem += "```\n" # Inicia bloco monospace para alinhamento
     for a in alertas:
-        status = "Disparado" if a.disparado == 'S' else "Ativo"
-        acao = "Comprar" if a.tipo == "compra" else "Vender"
+        # Emojis e Formatação
+        status_emoji = "✅" if a.disparado == 'N' else "🔔"
+        status_texto = "Ativo" if a.disparado == 'N' else "Disparado"
+        
+        acao_emoji = "📈" if a.tipo == "compra" else "💰"
+        acao_texto = "COMPRA" if a.tipo == "compra" else "VENDA"
+        
+        recorrencia_emoji = "🔁" if a.recorrencia == True else "👤"
+        recorrencia_texto = "Recorrente" if a.recorrencia == True else "Manual"
+        
+        # Constrói o bloco de exibição elegante
+        ticker_limpo = a.ticker.replace('.SA', '')
+        
+        mensagem += f"{recorrencia_emoji} {ticker_limpo:<7} {acao_emoji} {acao_texto:<6}\n"
+        
+        mensagem += f"  Alvo: R$ {a.valor:6.2f}\n"
+        mensagem += f"  {status_emoji} Status: {status_texto} ({recorrencia_texto})\n"
+        mensagem += "--------------------------------\n"
 
-        mensagem += f"**{a.ticker}** ({acao})\n"
-        mensagem += f"Valor: R$ {a.valor:.2f}\n"
-        mensagem += f"Status: {status}\n"
-        mensagem += "-----------------------\n"
-
+    mensagem += "```" # Fecha bloco monospace
+    
     await update.message.reply_text(mensagem, parse_mode='Markdown')
 
 async def remover_alerta(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -270,6 +346,9 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "  - Cria ou edita um alerta.\n"
         "  - *Exemplo:* `/set PETR4 compra 30.50`\n"
         "  - *Reativar:* Use o `/set` novamente com o mesmo ticker e tipo.\n\n"
+        "**🎯 /set <TICKER> <TIPO> <VALOR> recorrente**\n" \
+        "  - Cria um alerta recorrente(É resetado diáriamente às 9h30).\n"
+        "  - *Exemplo:* `/set PETR4 compra 30.50 recorrente`\n\n"
         "**📄 /list**\n"
         "  - Lista todos os seus alertas ativos e disparados.\n\n"
         "**🗑️ /rm <TICKER> <TIPO>**\n"
@@ -283,15 +362,17 @@ async def help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(help_message, parse_mode='Markdown')
 
+#Envia alerta diariamente 
+
 async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None:
-    print("Iniciando envio de cotações de fechamento diárias...")
+    logger.info("Iniciando rotina de cotações de fechamento B3.")
 
     session = Session()
     all_alertas = session.query(Alerta).all()
     session.close()
 
     if not all_alertas:
-        print("Nenhum alerta cadastrado, pulando envio de cotações.")
+        logger.info("Nenhum alerta cadastrado, pulando verificação.")
         return
 
     alertas_por_usuario = {}
@@ -304,10 +385,10 @@ async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None
 
     if tickers_para_buscar:
         tickers_list = list(tickers_para_buscar)
-        print(f"Buscando cotações para {len(tickers_list)} tickers...")
+        logger.info(f"Buscando cotações para {len(tickers_list)} tickers...")
         
         # PRIMEIRO: Tentar método individual mais confiável
-        print("Tentando método individual para cada ticker...")
+        logger.info("Tentando método individual para cada ticker...")
         for ticker in tickers_list:
             try:
                 acao = yf.Ticker(ticker)
@@ -322,7 +403,7 @@ async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None
                 
                 if preco_atual is not None and preco_atual > 0:
                     precos_atuais[ticker] = float(preco_atual)
-                    print(f"✅ {ticker}: R$ {preco_atual:.2f} (método individual)")
+                    logger.info(f"✅ {ticker}: R$ {preco_atual:.2f} (método individual)")
                 else:
                     # Tentar histórico diário como fallback
                     hist = acao.history(period="2d")
@@ -330,18 +411,18 @@ async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None
                         preco_atual = float(hist['Close'].iloc[-1])
                         if preco_atual > 0:
                             precos_atuais[ticker] = preco_atual
-                            print(f"✅ {ticker}: R$ {preco_atual:.2f} (histórico diário)")
+                            logger.info(f"✅ {ticker}: R$ {preco_atual:.2f} (histórico diário)")
                         else:
-                            print(f"❌ {ticker}: Preço inválido no histórico")
+                            logger.error(f"❌ {ticker}: Preço inválido no histórico")
                     else:
-                        print(f"❌ {ticker}: Sem dados disponíveis")
+                        logger.error(f"❌ {ticker}: Sem dados disponíveis")
                         
             except Exception as e:
-                print(f"❌ {ticker}: Erro no método individual - {e}")
+                logger.error(f"❌ {ticker}: Erro no método individual - {e}")
 
         # SEGUNDO: Se poucos preços foram encontrados, tentar download em lote como fallback
         if len(precos_atuais) < len(tickers_list) * 0.5:  # Se menos de 50% foram encontrados
-            print("Poucos preços encontrados, tentando download em lote...")
+            logger.warning("Poucos preços encontrados, tentando download em lote...")
             try:
                 data = yf.download(
                     tickers_list, 
@@ -364,14 +445,14 @@ async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None
                                         preco = float(close_series.iloc[-1])
                                         if preco and preco > 0 and not pd.isna(preco):
                                             precos_atuais[ticker] = preco
-                                            print(f"✅ {ticker}: R$ {preco:.2f} (download lote)")
+                                            logger.info(f"✅ {ticker}: R$ {preco:.2f} (download lote)")
                             except Exception as e:
-                                print(f"❌ {ticker}: Erro no download lote - {e}")
+                                logger.error(f"❌ {ticker}: Erro no download lote - {e}")
                 
             except Exception as e:
-                print(f"Erro no download em lote: {e}")
+                logger.error(f"Erro no download em lote: {e}")
 
-    print(f"\n📊 RESUMO: {len(precos_atuais)} de {len(tickers_list)} preços obtidos")
+    logger.info(f"📊 RESUMO: {len(precos_atuais)} de {len(tickers_list)} preços obtidos")
 
     # Envia as cotações para cada usuário
     for chat_id, alertas in alertas_por_usuario.items():
@@ -405,12 +486,35 @@ async def enviar_cotacoes_fechamento(context: ContextTypes.DEFAULT_TYPE) -> None
                     text=mensagem,
                     parse_mode='Markdown'
                 )
-                print(f"[SUCESSO DE FECHAMENTO] Mensagem com {len(ativos_com_preco)} ativos enviada para {chat_id}.")
+                logger.info(f"[SUCESSO DE FECHAMENTO] Mensagem com {len(ativos_com_preco)} ativos enviada para {chat_id}.")
             except Exception as e:
-                print(f"[ERRO DE TELEGRAM] falha ao enviar mensagem de fechamento para {chat_id}: {e}")
+                logger.error(f"[ERRO DE TELEGRAM] falha ao enviar mensagem de fechamento para {chat_id}: {e}")
         else:
-            print(f"[INFO] Nenhum preço válido encontrado para o usuário {chat_id}.")
-                 
+            logger.error(f"[INFO] Nenhum preço válido encontrado para o usuário {chat_id}.")
+
+#reseta alerta recorrentes diariamente
+def resetar_alertas_recorrentes(context: ContextTypes.DEFAULT_TYPE):
+    session = Session()
+    try:
+        #busca todos alertas setados como recorrentes
+        alertas_resetados = session.query(Alerta).filter(
+            Alerta.recorrencia == True,
+            Alerta.disparado == 'S'
+        ).update({Alerta.disparado:'N'}, synchronize_session=False)
+
+        session.commit()
+
+        #log de sucesso
+        logger.info(f"Rotina de reset concluída. {alertas_resetados} alertas recorrentes rearmados (disparado='N').")
+
+    except Exception as e:
+        # Log de erro
+        logger.error(f"Erro CRÍTICO ao tentar resetar alertas recorrentes: {e}")
+        session.rollback() # Garante que nada fique pendente
+
+    finally:
+        session.close()
+
 #ações de amidnistrador
 async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     #Adiciona um novo usuário autorizado (somente admin)
@@ -530,7 +634,7 @@ async def admin_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 def monitorar_cotacoes(app: Application, loop):
     #Loop que rodará em thread separada para monitorar as cotações
-    print("Iniciando monitoramento de cotações 24/7")
+    logger.info("Thread de monitoramento de cotações 24/7 iniciada.")
 
     while True:
         try:
@@ -556,7 +660,7 @@ def monitorar_cotacoes(app: Application, loop):
                         precos_atuais[ticker] = preco_atual
                     
                 except Exception as e:
-                    print(f"Erro ao buscar cotação de {ticker}: {e}")
+                    logger.error(f"Erro ao buscar cotação de {ticker}: {e}")
 
 
             #Verifica alertas
@@ -572,11 +676,11 @@ def monitorar_cotacoes(app: Application, loop):
                 if alerta.disparado == 'S':
                     if alerta.tipo == 'compra' and preco_atual > alerta.valor:
                         alerta.disparado = 'N'
-                        print(f"Rearmando alerta de compra para {alerta.ticker}. Está acima do alvo.")
+                        logger.info(f"Rearmando alerta de compra para {alerta.ticker}. Está acima do alvo.")
 
                     elif alerta.tipo == 'venda' and preco_atual < alerta.valor:
                         alerta.disparado = 'N'
-                        print(f"Rearmando alerta de venda para {alerta.ticker}. Está abaixo do alvo.")
+                        logger.info(f"Rearmando alerta de venda para {alerta.ticker}. Está abaixo do alvo.")
                 #Caso esteja na zona de alerta e disparado
                     if alerta.disparado == 'S':
                         continue
@@ -611,16 +715,16 @@ def monitorar_cotacoes(app: Application, loop):
                         loop
                     )
                     future.result(timeout=5)  # Espera a conclusão do envio
-                    print(f"[SUCESSO DE ENVIO] alerta enviado para {chat_id}: {assunto}")
+                    logger.info(f"Alerta enviado para {chat_id}: {assunto}")
                 
                 except Exception as e:
-                    print(f"[ERRO DE TELEGRAM] falha ao enviar mensagem para {chat_id}: {e}")
+                    logger.error(f"Falha ao enviar alerta para {chat_id}: {e}")
 
             #Aguardo antes da próxima verificação
             time.sleep(intevalo_monitoramento)
         
         except Exception as e:
-            print(f"[ERRO GERAL] no loop de monitoramento: {e}")
+            logger.critical(f"ERRO CRÍTICO no loop de monitoramento: {e}")
 
             try:
                 if 'session' in locals() and session.is_active:
@@ -632,7 +736,7 @@ def monitorar_cotacoes(app: Application, loop):
 
 def main() -> None:
     #configurar e inciar o bot e a thread de monitoramento
-    print("Iniciando bot do Telegram...")
+    logger.info("Iniciando bot do Telegram...")
 
     application = Application.builder().token(telegram_token).build()
 
@@ -656,16 +760,24 @@ def main() -> None:
     try:
         # Verificar se job_queue está disponível
         if hasattr(application, 'job_queue') and application.job_queue:
+            #Agendamento 1: Mensagem de fechamento
             application.job_queue.run_daily(
                 callback=enviar_cotacoes_fechamento,
                 time=datetime.time(hour=17, minute=30, second=0, tzinfo=ZoneInfo("America/Sao_Paulo")),
                 name='fechamento_b3'
+            )   
+            logger.info("Rotina de Fechamento B3 agendada para 17:30h (Seg-Sex).")
+
+            application.job_queue.run_daily(
+                callback=resetar_alertas_recorrentes,
+                time=datetime.time(hour=9,minute=30, second=0,tzinfo=ZoneInfo("America/Sao_Paulo"))
             )
-            print("Rotina de Fechamento B3 agendada para 17:30h (Seg-Sex).")
+            logger.info("Rotina de Reset de Alertas Recorrentes agendada para 9:30h (Seg-Sex).")
+
         else:
-            print("⚠️  Job queue não disponível. Rotina de fechamento não agendada.")
+            logger.warning("Job queue não disponível. Rotina de fechamento não agendada.")
     except Exception as e:
-        print(f"❌ Erro ao agendar job diário: {e}")
+        logger.error(f"Erro ao agendar job diário: {e}")
     
     loop = asyncio.get_event_loop()
 
@@ -675,7 +787,7 @@ def main() -> None:
     
 
     #Iniciar o bot
-    print("Bot iniciado. Aguardando comandos...")
+    logger.info("Bot iniciado. Aguardando comandos...")
     application.run_polling(poll_interval=1)
       
 if __name__ == "__main__":
